@@ -1,0 +1,48 @@
+Реализирайте команда cat, работеща с произволен брой подадени входни параметри.
+
+#include <err.h>
+#include <stdint.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <string.h>
+
+void cat_file(const char* file) {
+    int fd = open(file, O_RDONLY);
+    if (fd == -1) {
+        err(2, "Could not open file %s!\n", file);
+    }
+    char buffer[4096];
+    ssize_t read_bytes;
+    while((read_bytes = read(fd, buffer, sizeof(buffer))) > 0) {
+        ssize_t written_bytes = write(1, buffer, read_bytes);
+        if (written_bytes == -1) {
+            close(fd);
+            err(4, "Could not write properly to stdout from file %s!\n", file);
+        }
+        if (written_bytes != read_bytes) {
+            uint16_t position_backwards = (read_bytes - written_bytes) * -1;
+            off_t new_pos = lseek(fd, position_backwards, SEEK_CUR);
+            if (new_pos == -1) {
+                close(fd);
+                err(5, "Could not lseek in file %s!\n", file);
+            }
+        }
+    }
+    if (read_bytes == -1) {
+        close(fd);
+        err(3, "Could not read properly from file %s!\n", file);
+    }
+    close(fd);
+}
+
+int main(int argc, char** argv) {
+    if (argc < 2) {
+        errx(1, "At least one regular file expected!");
+    }
+
+    for(uint8_t i = 1; i < argc; i++) {
+        const char* file = argv[i];
+        cat_file(file);
+    }
+        return 0;
+}

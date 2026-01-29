@@ -1,0 +1,148 @@
+2017-SE-03
+Напишете програма на C, която приема три параметъра, имена на двоични файлове.
+
+Примерно извикване:
+$ ./main patch.bin f1.bin f2.bin
+
+Файловете f1.bin и f2.bin се третират като двоични файлове, състоящи се от байтове (uint8_t).
+Файлът patch.bin е двоичен файл, състоящ се от наредени тройки от следните елементи (и техните типове):
+	• отместване uint16_t
+	• оригинален байт uint8_t
+	• нов байт uint8_t
+
+Програмата да създава файла f2.bin като копие на файла f1.bin, но с отразени промени на базата
+на файла patch.bin, при следния алгоритъм:
+	• за всяка наредена тройка от patch.bin, ако на съответното отместване (в байтове) спрямо началото на файла е записан байта оригинален байт, в изходния файл се записва нов байт. Ако не
+	е записан такъв оригинален байт или такова отместване не съществува, програмата да прекратява изпълнението си по подходящ начин;
+	• всички останали байтове се копират директно.
+
+Забележка: Наредените тройки във файла patch.bin да се обработват последователно.
+Примерен f1.bin:
+00000000: f5c4 b159 cc80 e2ef c1c7 c99a 2fb0 0d8c ...Y......../...
+00000010: 3c83 6fed 6b46 09d2 90df cf1e 9a3c 1f05 <.o.kF.......<..
+00000020: 05f9 4c29 fd58 a5f1 cb7b c9d0 b234 2398 ..L).X...{...4#.
+00000030: 35af 6be6 5a71 b23a 0e8d 08de def2 214c 5.k.Zq.:......!L
+Примерен patch.bin:
+00000000: 0200 b159 3000 35af ...Y0.5.
+Примерен f2.bin:
+00000000: f5c4 5959 cc80 e2ef c1c7 c99a 2fb0 0d8c ..YY......../...
+00000010: 3c83 6fed 6b46 09d2 90df cf1e 9a3c 1f05 <.o.kF.......<..
+00000020: 05f9 4c29 fd58 a5f1 cb7b c9d0 b234 2398 ..L).X...{...4#.
+00000030: afaf 6be6 5a71 b23a 0e8d 08de def2 214c ..k.Zq.:......!L
+
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+#include <err.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <sys/wait.h>
+
+typedef struct {
+    uint16_t offset;
+    uint8_t original_byte;
+    uint8_t new_byte;
+} triplet_t;
+
+int open_safe(const char* file, bool isForRead) {
+    int fd;
+    if (isForRead) {
+        fd = open(file, O_RDONLY);
+    } else {
+        fd = open(file, O_WRONLY | O_TRUNC | O_CREAT, 0666);
+    }
+    if (fd == -1) {
+        err(2, "Could not open file %s!\n", file);
+    }
+    return fd;
+}
+
+off_t get_size(int fd, const char* file) {
+    struct stat info;
+    if((fstat(fd, &info)) == -1) {
+        err(3, "Could not stat file %s!\n", file);
+    }
+    return info.st_size;
+}
+
+void sizeValidation(off_t file_size, const char* file, size_t size) {
+    if ((file_size % size) != 0) {
+        errx(4, "Invalid file size of %s!\n", file);
+    }
+    if (file_size == 0) {
+        errx(5, "Empty file %s!\n", file);
+    }
+}
+
+void lseek_safe(int fd, const char* file, uint16_t offset) {
+    off_t position = lseek(fd, offset, SEEK_SET);
+    if(position == -1) {
+        err(8, "Could not lseek in file %s!\n", file);
+    }
+}
+
+void copy_file(const char* source, const char* dest) {
+    pid_t pid = fork();
+    if (pid == -1) {
+        err(9, "Could not create a child process!\n");
+    }
+    if (pid == 0) {
+        execlp("cp", "cp", source, dest, (char*)NULL);
+        err(10, "Could not copy files!\n");
+    }
+    int status;
+    if((wait(&status)) == -1) {
+        err(11, "Could not wait for child!\n");
+    }
+    if(!WIFEXITED(status)) {
+        errx(12, "Task failed: child was kelled!\n");
+    } else if (WEXITSTATUS(status) != 0) {
+        errx(13, "Task failed: child's exit status is not 0!\n");
+    }
+}
+
+int main(int argc, char* argv[]) {
+    if (argc != 4) {
+        errx(1, "Three binary files expected!\n");
+    }
+    int fd_f1 = open_safe(argv[1], true);
+    int fd_f2 = open_safe(argv[2], false);
+    int fd_patch = open_safe(argv[3], true);
+
+    off_t f1_size = get_size(fd_f1, argv[1]);
+    off_t patch_size = get_size(fd_patch, argv[3]);
+
+    sizeValidation(f1_size, argv[1], sizeof(uint8_t));
+    sizeValidation(patch_size, argv[3], sizeof(triplet_t));
+
+    copy_file(argv[1], argv[2]);
+
+    triplet_t triplet;
+    ssize_t read_bytes;
+    uint8_t curr_byte;
+    while((read_bytes = read(fd_patch, &triplet, sizeof(triplet))) == sizeof(triplet)) {
+        lseek_safe(fd_f2, argv[2], triplet.offset);
+        lseek_safe(fd_f1, argv[1], triplet.offset);
+        if (read(fd_f1, &curr_byte, sizeof(curr_byte)) == -1) {
+            err(15, "Could not read from first file!\n");
+        }
+        if (curr_byte != triplet.original_byte) {
+            errx(16, "Inconsistent bytes in files %s and %s!\n", argv[1], argv[3]);
+        }
+        if(write(fd_f2, &triplet.new_byte, sizeof(triplet.new_byte)) == -1) {
+            err(14, "Could not write properly in file %s!\n", argv[2]);
+        }
+    }
+    if (read_bytes == -1) {
+        err(6, "Error while reading from patch file!\n");
+    } else if (read_bytes != 0) {
+        errx(7, "Could not read a whole triplet from patch file!\n");
+    }
+
+    close(fd_f1);
+    close(fd_f2);
+    close(fd_patch);
+    return 0;
+}

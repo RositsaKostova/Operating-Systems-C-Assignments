@@ -1,0 +1,98 @@
+Напишете програма на C, която приема параметър – име на директория. Програмата
+трябва да извежда името на най-скоро променения (по съдържание) файл в тази директория и нейните под-директории, чрез употреба на външни шел команди през pipe().
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+#include <err.h>
+#include <unistd.h>
+#include <sys/wait.h>
+
+void dup2_safe_stdout(int fd) {
+    if(dup2(fd, 1) == -1) {
+        err(5, "Could not redirect stdout!\n");
+    }
+}
+
+void dup2_safe_stdin(int fd) {
+    if(dup2(fd, 0) == -1) {
+        err(6, "Could not redirect stdin!\n");
+    }
+}
+
+int main(int argc, char* argv[]) {
+    if (argc != 2) {
+        errx(1, "A directory expected!\n");
+    }
+
+    pid_t pid;
+
+    int find_to_sort[2];
+    if (pipe(find_to_sort) == -1) {err(2, "Could not create a pipe!\n");}
+    if ((pid = fork()) == -1) {err(3, "Could not create a child process!\n");}
+    if (pid == 0) {
+        close(find_to_sort[0]);
+        dup2_safe_stdout(find_to_sort[1]);
+        close(find_to_sort[1]);
+
+        execlp("find", "find", argv[1], "-type", "f", "-exec", "stat", "-c", "'%Y %n'", "{}", "+", (char*)NULL);
+        err(4, "Could not exec find!\n");
+    }
+
+    close(find_to_sort[1]);
+
+    int sort_to_tail[2];
+    if (pipe(sort_to_tail) == -1) {err(2, "Could not create a pipe!\n");}
+    if ((pid = fork()) == -1) {err(3, "Could not create a child process!\n");}
+    if (pid == 0) {
+        close(sort_to_tail[0]);
+
+        dup2_safe_stdin(find_to_sort[0]);
+        close(find_to_sort[0]);
+
+        dup2_safe_stdout(sort_to_tail[1]);
+        close(sort_to_tail[1]);
+
+        execlp("sort", "sort", (char*)NULL);
+        err(7, "Could not exec sort!\n");
+    }
+
+    close(find_to_sort[0]);
+    close(sort_to_tail[1]);
+
+    int tail_to_cut[2];
+    if (pipe(tail_to_cut) == -1) {err(2, "Could not create a pipe!\n");}
+    if ((pid = fork()) == -1) {err(3, "Could not create a child process!\n");}
+    if (pid == 0) {
+        close(tail_to_cut[0]);
+
+        dup2_safe_stdin(sort_to_tail[0]);
+        close(sort_to_tail[0]);
+
+        dup2_safe_stdout(tail_to_cut[1]);
+        close(tail_to_cut[1]);
+
+        execlp("tail", "tail", "-n1", (char*)NULL);
+        err(8, "Could not exec tail!\n");
+    }
+
+    close(sort_to_tail[0]);
+    close(tail_to_cut[1]);
+
+    if ((pid = fork()) == -1) {err(3, "Could not create a child process!\n");}
+    if (pid == 0) {
+        dup2_safe_stdin(tail_to_cut[0]);
+        close(tail_to_cut[0]);
+
+        execlp("cut", "cut", "-d", " ", "-f2-", (char*)NULL);
+        err(9, "Could not exec cut!\n");
+    }
+
+    close(tail_to_cut[0]);
+
+    int status;
+    for(int i = 0; i < 4; i++) {
+        if (wait(&status) == -1) {err(10, "Parent could not wait for child!\n");}
+        if (!WIFEXITED(status)) {errx(11, "Task failed: a child was killed!\n");}
+        if (WEXITSTATUS(status) != 0) {errx(12, "Task failed: exit status is not 0!\n");}
+    }
+
+        return 0;
+}

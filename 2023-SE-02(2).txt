@@ -1,0 +1,121 @@
+2023-SE-02
+Имате файл, съдържащ английски тълковен речник, представен във формат, описан по-долу. Напи-
+шете програма, която по подадена дума изписва нейната дефиниция на stdout (ако думата я няма в
+речника, извежда подходящо съобщение).
+
+Програмата приема два аргумента: търсена дума и файл с речник (./main respect english.dic)
+Речникът се състои от записи, а всеки запис се състои от:
+	• Нулев байт
+	• Дума, представена като последователност от байтове (между 1 и 63), не съдържаща символи за нов ред и нулеви байтове
+	• Символ за нов ред
+	• Описание на думата (произволно дълга последователност от байтове), не съдържащо нулеви байтове
+
+Записите са сортирани лексикографски по думите.
+Тази задача изисква решение, прочитащо най-много 𝑂(𝑀 log(𝑁 )) байта от речника, където 𝑁 е размерът на речника а 𝑀 е максималната дължина на запис. Решения с по-лоша сложност се оценяват с
+най-много 8 точки. (Подсказка: двоично търсене.)
+За улеснение, програмата може да приеме като трети аргумент индексен файл, състоящ се от 32-
+битови числа без знак (./main respect english.dic english.idx). Тези числа са позициите на всички нулеви байтове в речника. Ако програмата ви работи без този аргумент, ще получите бонус точки.
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+#include <err.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <stdint.h>
+#include <sys/stat.h>
+#include <stdbool.h>
+#include <string.h>
+
+int open_safe(const char* file) {
+    int fd = open(file, O_RDONLY);
+    if(fd == -1) {err(2, "Could not open file %s!\n", file);}
+    return fd;
+}
+
+off_t get_size(int fd, const char* file) {
+    struct stat info;
+    if(fstat(fd, &info) == -1) {err(3, "Could not stat file %s!\n", file);}
+    return info.st_size;
+}
+
+void lseek_safe(int fd, const char* file, uint32_t position) {
+    if (lseek(fd, position, SEEK_SET) == -1) {err(5, "Could not lseek file %s!\n", file);}
+}
+
+uint32_t get_null_pos(int fd, const char* file) {
+    ssize_t read_bytes;
+    uint32_t pos;
+    if ((read_bytes = read(fd, &pos, sizeof(pos))) == -1) {err(6, "Could not read from file %s!\n", file);}
+    if (read_bytes != sizeof(uint32_t)) {errx(7, "Could not read a whole position in file %s!\n", file);}
+    return pos;
+}
+
+void read_word(char* current_word, int fd) {
+    ssize_t read_bytes;
+    char ch;
+    int iter = 0;
+    while((read_bytes = read(fd, &ch, sizeof(ch))) > 0) {
+        if (ch == '\n') {
+            current_word[iter] = '\0';
+            break;
+        }
+        current_word[iter] = ch;
+        iter++;
+    }
+    if (read_bytes == -1) {err(8, "Could not read from dictionery!\n");}
+}
+
+void get_meaning(int fd) {
+    ssize_t read_bytes;
+    char ch;
+    while((read_bytes = read(fd, &ch, sizeof(ch))) > 0) {
+        if (ch == '\0') {break;}
+        if (write(1, &ch, sizeof(ch)) == -1) {err(9, "Could not write to stdout!\n");}
+    }
+    if (read_bytes == -1) {err(8, "Could not read from dictionery!\n");}
+}
+
+int main(int argc, char* argv[]) {
+    if (argc != 4) {errx(1, "A word and two files expected!\n");}
+
+    const char* word = argv[1];
+    const char* dict = argv[2];
+    const char* pos = argv[3];
+
+    int fd_dict = open_safe(dict);
+    int fd_pos = open_safe(pos);
+
+    off_t dict_size = get_size(fd_dict, dict);
+    off_t pos_size = get_size(fd_pos, pos);
+
+    if (dict_size == 0) {errx(4, "File %s is empty!\n", dict);}
+    if (pos_size % sizeof(uint32_t) != 0) {errx(5, "File %s must contain only uint32_t numbers!\n", pos);}
+
+    uint32_t words_count = pos_size / sizeof(uint32_t);
+    int rhs = words_count - 1;
+    int lhs = 0;
+    bool isFound = false;
+    while(rhs >= lhs) {
+        int midd = lhs + (rhs - lhs) / 2;
+        uint32_t null_pos = get_null_pos(fd_pos, pos);
+        lseek_safe(fd_dict, dict, null_pos + 1);
+        char current_word[63];
+        read_word(current_word, fd_dict);
+        if (strcmp(current_word, word) == 0) {
+            isFound = true;
+            get_meaning(fd_dict);
+            break;
+        } else if(strcmp(current_word, word) > 0) {
+            rhs = midd - 1;
+        } else {
+            lhs = midd + 1;
+        }
+    }
+
+    close(fd_dict);
+    close(fd_pos);
+    if (isFound == false) {
+        const char* message = "The searched word does not exist in the dictionery!\n";
+        if (write(1, message, strlen(message)) == -1) {err(9, "Could not write message to stdout!\n");}
+    }
+    return 0;
+}

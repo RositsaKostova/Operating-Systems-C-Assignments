@@ -1,0 +1,146 @@
+Зад. 117 2023-SE-01
+Напишете програма на C, която приема като аргумент име на директория и генерира хешове на файловете в нея, работейки паралелно.
+При изпълнение върху директория my-dir, програмата:
+	• За всеки файл в директорията и нейните поддиректории (напр. my-dir/foo/my-file), трябва
+	да създаде файл my-dir/foo/my-file.hash, съдържащ хеш-сумата на my-file
+	• Може да извиква външните команди find (за откриване на файлове) и md5sum (за пресмятане на хеш-сума)
+	• Не трябва да обработва файлове, чиито имена вече завършват на .hash
+	• Трябва да позволява md5sum-процесите да работят паралелно един спрямо друг
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+#include <unistd.h>
+#include <err.h>
+#include <fcntl.h>
+#include <string.h>
+#include <sys/wait.h>
+#include <stdlib.h>
+
+void do_task(const char* buffer) {
+    char hash_file[4101];
+    if (strlen(buffer) + strlen(".hash") >= sizeof(hash_file)) {
+        errx(20, "Filename too long!\n");
+    }
+
+    strcpy(hash_file, buffer);
+    strncat(hash_file, ".hash", sizeof(hash_file) - strlen(hash_file) - 1);
+
+    int fd = open(hash_file, O_WRONLY | O_TRUNC | O_CREAT, 0666);
+    if (fd == -1) {
+        err(8, "Failed to open file %s!\n", hash_file);
+    }
+
+    int md5sumFds[2];
+    if (pipe(md5sumFds) == -1) {
+        err(2, "Could not create a communication channel between processes!\n");
+    }
+
+    pid_t pid = fork();
+    if (pid == -1) {
+        err(3, "Could not create a child process!\n");
+    }
+
+    if (pid == 0) {
+        close(md5sumFds[0]);
+        if (dup2(md5sumFds[1], 1) == -1) {
+            err(4, "Could not duplicate file descriptors!\n");
+        }
+        close(md5sumFds[1]);
+
+        execlp("md5sum", "md5sum", buffer, (char*)NULL);
+        err(9, "Could not sum hash of file %s!\n", buffer);
+    }
+
+    close(md5sumFds[1]);
+    char byte;
+    ssize_t read_bytes;
+    while ((read_bytes = read(md5sumFds[0], &byte, sizeof(byte))) > 0) {
+        if (write(fd, &byte, sizeof(byte)) == -1) {
+            err(10, "Could not write properly to file %s!\n", hash_file);
+        }
+    }
+    if (read_bytes == -1) {
+        err(6, "Could not read properly from pipe!\n");
+    }
+    close(fd);
+    close(md5sumFds[0]);
+}
+
+int main(int argc, char* argv[]) {
+    if (argc != 2) {
+        errx(1, "A directory argument expected!\n");
+    }
+
+    int findFds[2];
+    if (pipe(findFds) == -1) {
+        err(2, "Could not create a communication channel between processes!\n");
+    }
+
+    pid_t find_pid = fork();
+    if (find_pid == -1) {
+        err(3, "Could not create a child process!\n");
+    }
+
+    if (find_pid == 0) {
+        close(findFds[0]);
+        if (dup2(findFds[1], 1) == -1) {
+            err(4, "Could not duplicate file descriptors!\n");
+        }
+        execlp("find", "find", argv[1], "-type", "f", "-not", "-name", "*.hash", "-print0", (char*)NULL);
+        err(5, "Could not execute find command!\n");
+    }
+
+    close(findFds[1]);
+
+    char buffer[4096];
+    int iter = 0;
+    int workers_count = 0;
+    char ch;
+    ssize_t read_bytes;
+    while ((read_bytes = read(findFds[0], &ch, sizeof(char))) > 0) {
+        if (iter >= sizeof(buffer)) {
+            errx(7, "Too long file!\n");
+        }
+
+        if (ch == '\0') {
+            buffer[iter] = '\0';
+            iter = 0;
+
+            pid_t child_pid = fork();
+            if (child_pid == -1) {
+                err(3, "Could not create a child process!\n");
+            }
+            if (child_pid == 0) {
+                close(findFds[0]);
+                do_task(buffer);
+                exit(0);
+            }
+            workers_count++;
+        } else {
+            buffer[iter++] = ch;
+        }
+    }
+
+    if (read_bytes == -1) {
+        err(6, "Could not read properly from pipe!\n");
+    }
+
+    close(findFds[0]);
+
+    // ✅ Изчакваме всички работници
+    int status;
+    for (int i = 0; i < workers_count; i++) {
+        if (wait(&status) == -1) {
+            err(11, "Could not wait for child!\n");
+        }
+        if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
+            errx(13, "Child exit status is not 0!\n");
+        } else if (!WIFEXITED(status)) {
+            errx(12, "Child was killed!\n");
+        }
+    }
+
+    // ✅ Изчакваме find процеса
+    waitpid(find_pid, NULL, 0);
+
+    return 0;
+}

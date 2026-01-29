@@ -1,0 +1,120 @@
+ 2017-SE-01
+Напишете програма на C, която приема три параметъра – имена на двоични файлове.
+
+Примерно извикване:
+$ ./main f1.bin f2.bin patch.bin
+
+Файловете f1.bin и f2.bin се третират като двоични файлове, състоящи се от байтове (uint8_t).
+Файлът f1.bin e “оригиналният” файл, а f2.bin е негово копие, което е било модифицирано по някакъв
+начин (извън обхвата на тази задача). Файлът patch.bin е двоичен файл, състоящ се от наредени
+тройки от следните елементи (и техните типове):
+	• отместване (uint16_t) – спрямо началото на f1.bin/f2.bin
+	• оригинален байт (uint8_t) – на тази позиция в f1.bin
+	• нов байт (uint8_t) – на тази позиция в f2.bin
+Вашата програма да създава файла patch.bin, на базата на съществуващите файлове f1.bin и f2.bin,
+като описва вътре само разликите между двата файла.
+Ако дадено отместване съществува само в единия от файловете f1.bin/f2.bin, програмата да прекратява изпълнението си по подходящ начин.
+
+Примерен f1.bin:
+00000000: f5c4 b159 cc80 e2ef c1c7 c99a 2fb0 0d8c 	...Y......../...
+00000010: 3c83 6fed 6b46 09d2 90df cf1e 9a3c 1f05 	<.o.kF.......<..
+00000020: 05f9 4c29 fd58 a5f1 cb7b c9d0 b234 2398 	..L).X...{...4#.
+00000030: 35af 6be6 5a71 b23a 0e8d 08de def2 214c 	5.k.Zq.:......!L
+Примерен f2.bin:
+00000000: f5c4 5959 cc80 e2ef c1c7 c99a 2fb0 0d8c 	..YY......../...
+00000010: 3c83 6fed 6b46 09d2 90df cf1e 9a3c 1f05 	<.o.kF.......<..
+00000020: 05f9 4c29 fd58 a5f1 cb7b c9d0 b234 2398 	..L).X...{...4#.
+00000030: afaf 6be6 5a71 b23a 0e8d 08de def2 214c 	..k.Zq.:......!L
+
+Примерен patch.bin:
+00000000: 0200 b159 3000 35af 	...Y0.5.
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+#include <err.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <stdbool.h>
+#include <stdint.h>
+
+typedef struct {
+    uint16_t offset;
+    uint8_t original_byte;
+    uint8_t new_byte;
+} triplet_t;
+
+int open_safe(const char* file, bool isForRead) {
+    int fd;
+    if (isForRead) {
+        fd = open(file, O_RDONLY);
+    } else {
+        fd = open(file, O_WRONLY | O_TRUNC | O_CREAT, 0666);
+    }
+    if (fd == -1) {
+        err(2, "Could not open file %s!\n", file);
+    }
+    return fd;
+}
+
+off_t get_size(int fd, const char* file) {
+    struct stat info;
+    if((fstat(fd, &info)) == -1) {
+        err(3, "Could not stat file %s!\n", file);
+    }
+    return info.st_size;
+}
+
+void sizeValidation(off_t size, const char* file) {
+    if ((size % sizeof(uint8_t)) != 0) {
+        errx(4, "Invalid file size of %s!\n", file);
+    }
+}
+
+int main(int argc, char* argv[]) {
+    if (argc != 4) {
+        errx(1, "Three binary files expected!\n");
+    }
+
+    int fd_f1 = open_safe(argv[1], true);
+    int fd_f2 = open_safe(argv[2], true);
+    int fd_patch = open_safe(argv[3], false);
+
+    off_t f1_size = get_size(fd_f1, argv[1]);
+    off_t f2_size = get_size(fd_f2, argv[2]);
+
+    sizeValidation(f1_size, argv[1]);
+    sizeValidation(f2_size, argv[2]);
+
+    if (f1_size != f2_size) {
+        errx(5, "Files %s and %s must have the same size!\n", argv[1], argv[2]);
+    }
+
+    uint8_t f1_byte;
+    uint8_t f2_byte;
+    ssize_t read_f1;
+    ssize_t read_f2;
+    uint16_t offset = 0;
+    ssize_t written_bytes;
+    while((read_f1 = read(fd_f1, &f1_byte, sizeof(f1_byte))) > 0) {
+        if ((read_f2 = read(fd_f2, &f2_byte, sizeof(f2_byte))) == -1) {
+            err(6, "Could not read properly from file %s!\n", argv[2]);
+        }
+        if (f1_byte != f2_byte) {
+            triplet_t triplet = {offset, f1_byte, f2_byte};
+            written_bytes = write(fd_patch, &triplet, sizeof(triplet));
+            if(written_bytes != sizeof(triplet)) {
+                err(7, "Could not write properly to file %s!\n", argv[3]);
+            }
+        }
+        offset++;
+    }
+    if (read_f1 == -1) {
+        err(6, "Could not read properly from file %s!\n", argv[1]);
+    }
+
+    close(fd_f1);
+    close(fd_f2);
+    close(fd_patch);
+    return 0;
+}

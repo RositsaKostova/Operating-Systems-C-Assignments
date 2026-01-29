@@ -1,0 +1,140 @@
+2017-IN-02
+Напишете програма на C, която приема незадължителен параметър – име на команда.
+Ако не е зададена команда като параметър, да се ползва командата echo. Максималната допустима
+дължина на командата е 4 знака.
+Програмата чете низове (с максимална дължина 4 знака) от стандартния си вход, разделени с интервали (0x20)
+или знак за нов ред (0x0A). Ако някой низ е с дължина по-голяма от 4 знака, то програмата
+да терминира със съобщение за грешка.
+Подадените на стандартния вход низове програмата трябва да третира като множество от параметри
+за дефинираната команда. Програмата ви трябва да изпълни командата колкото пъти е необходимо с
+максимум два низа като параметри, като изчаква изпълнението да приключи, преди да започне ново
+изпълнение.
+
+Примерни вход, извиквания и изходи:
+$ cat f1
+a1
+
+$ cat f2
+a2
+
+$ cat f3
+a3
+
+$ echo -e "f1\nf2 f3" | ./main cat
+a1
+a2
+a3
+
+$ echo -e "f1\nf2 f3" | ./main
+f1 f2
+f3
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+#include <err.h>
+#include <string.h>
+#include <stdbool.h>
+#include <unistd.h>
+#include <sys/wait.h>
+#include <stdlib.h>
+
+void exec_comm(char** args, char* command) {
+    pid_t pid = fork();
+    if (pid == -1) {err(5, "Could not create a child process!\n");}
+    if(pid == 0) {
+        execvp(command, args);
+        err(6, "Could not execute the command!\n");
+    }
+    int status;
+    if (wait(&status) == -1) {err(7, "Could not wait for child!\n");}
+    if (WIFEXITED(status)) {
+        if(WEXITSTATUS(status) != 0) {
+            errx(9, "Child exit status is not 0!\n");
+        }
+    }
+    else {
+        errx(8, "Child was killed!\n");
+    }
+}
+
+int main(int argc, char* argv[]) {
+    if (argc > 2) {errx(1, "One argument (a command) expected!\n");}
+
+    char command[5];
+    if (argc == 1) {
+        const char* echo_command = "echo";
+        strcpy(command, echo_command);
+        command[4] = '\0';
+    }
+    else if (argc == 2) {
+        int command_len = strlen(argv[1]);
+        if (command_len > 4) {
+            errx(2, "Command must be at most 4 characters long!\n");
+        }
+        strcpy(command, argv[1]);
+        command[command_len] = '\0';
+    }
+
+    char args[4096][5];
+    int args_count = 0;
+
+    char current[5];
+    int len_iter = 0;
+
+    ssize_t read_bytes;
+    char ch;
+    bool toAdd = false;
+    while((read_bytes = read(0, &ch, sizeof(ch))) > 0) {
+        if (ch == 0x20 || ch == 0x0A) {
+            if (toAdd == true) {
+                current[len_iter] = '\0';
+                strcpy(args[args_count], current);
+                args[args_count][len_iter] = '\0';
+                args_count++;
+                len_iter = 0;
+                toAdd = false;
+            }
+        }
+        else if (ch != 0x20 && ch != 0x0A) {
+            if (len_iter == 4) {errx(4, "Invalid arguments!\n");}
+            current[len_iter] = ch;
+            len_iter++;
+            toAdd = true;
+        }
+    }
+    if (read_bytes == -1) {err(3, "Could not read properly from stdin!\n");}
+
+    char* toExec_1[3];
+    char* toExec_2[4];
+    toExec_1[0] = malloc(5);
+    toExec_1[1] = malloc(5);
+    toExec_2[0] = malloc(5);
+    toExec_2[1] = malloc(5);
+    toExec_2[2] = malloc(5);
+    strcpy(toExec_1[0], command);
+    strcpy(toExec_2[0], command);
+    int iter = 1;
+    while(iter <= args_count) {
+        if (iter == args_count) {
+            strcpy(toExec_1[1], args[iter - 1]);
+            toExec_1[2] = NULL;
+            iter++;
+            exec_comm(toExec_1, command);
+        }
+        else {
+            strcpy(toExec_2[1], args[iter - 1]);
+            iter++;
+            strcpy(toExec_2[2], args[iter - 1]);
+            iter++;
+            toExec_2[3] = NULL;
+            exec_comm(toExec_2, command);
+        }
+    }
+
+    free(toExec_1[0]);
+    free(toExec_1[1]);
+    free(toExec_2[0]);
+    free(toExec_2[1]);
+    free(toExec_2[2]);
+    return 0;
+}

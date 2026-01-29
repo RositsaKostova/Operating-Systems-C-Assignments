@@ -1,0 +1,103 @@
+2020-SE-02
+Инженерите от съседната лабораторя работят с комплекти SCL/SDL файлове, напр. input.scl/input.sdl.
+В SCL файла са записани нива на сигнали (ниско 0 или високо 1), т.е., файлът се третира като състоящ се от битове. В SDL файла са записани данни от тип uint16_t, като всеки елемент съответства
+позиционно на даден бит от SCL файла.
+Помогнете на колегите си, като напишете програма на C, която да бъде удобен инструмент за изваждане в нов файл само на тези SDL елементи, които са имали високо ниво в SCL файла, запазвайки
+наредбата им.
+
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+#include <err.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <sys/stat.h>
+
+int open_safe(const char* file, bool isForRead) {
+    int fd;
+    if (isForRead) {
+        fd = open(file, O_RDONLY);
+    } else {
+        fd = open(file, O_WRONLY | O_TRUNC | O_CREAT, 0666);
+    }
+    if (fd == -1) {
+        err(2, "Could not open file %s!\n", file);
+    }
+    return fd;
+}
+
+off_t get_size(int fd, const char* file) {
+    struct stat info;
+    if((fstat(fd, &info)) == -1) {
+        err(3, "Could not stat file %s!\n", file);
+    }
+    return info.st_size;
+}
+
+void empty_validation(off_t size, const char* file) {
+    if (size == 0) {
+        errx(4, "Empty file %s!\n", file);
+    }
+}
+
+void lseek_safe(int fd, const char* file, uint32_t offset) {
+    off_t position = lseek(fd, offset, SEEK_SET);
+    if(position == -1) {
+        err(8, "Could not lseek in file %s!\n", file);
+    }
+}
+
+int main(int argc, char* argv[]) {
+    if (argc != 3) {
+        errx(1, "Two files expected!\n");
+    }
+
+    int scl_fd = open_safe(argv[1], true);
+    int sdl_fd = open_safe(argv[2], true);
+
+    off_t scl_size = get_size(scl_fd, argv[1]);
+    off_t sdl_size = get_size(sdl_fd, argv[2]);
+
+    empty_validation(scl_size, argv[1]);
+    empty_validation(sdl_size, argv[2]);
+
+    if ((sdl_size % sizeof(uint16_t)) != 0) {
+        errx(5, "The SDL file must contain uint16_t elements!\n");
+    }
+    if ((scl_size * 8) != (long int)(sdl_size / sizeof(uint16_t))) {
+        errx(6, "Inconsistent data!\n");
+    }
+
+    const char* result_file = "./result.txt";
+    int result_fd = open_safe(result_file, false);
+
+    ssize_t read_bytes;
+    ssize_t written_bytes;
+    uint8_t curr_byte;
+    uint16_t el;
+    for(off_t i = 1; i <= scl_size; i++) {
+        uint8_t mask = (1 << 7);
+        if((read_bytes = read(scl_fd, &curr_byte, sizeof(curr_byte))) == -1) {
+            err(7, "Could not read a byte from file %s!\n", argv[1]);
+        }
+        for(int j = 1; j <= 8; j++) {
+            if((curr_byte & mask) != 0) {
+                uint32_t bit_position =((i - 1) * 8) + (j - 1);
+                lseek_safe(sdl_fd, argv[2], bit_position - 1);
+                if((read_bytes = read(sdl_fd, &el, sizeof(el))) == -1) {
+                    err(9, "Could not read properly from file %s!\n", argv[2]);
+                }
+                if((written_bytes = write(result_fd, &el, sizeof(el))) == -1) {
+                    err(10, "Could not write properly to file %s!\n", result_file);
+                }
+            }
+            mask = mask >> 1;
+        }
+    }
+
+    close(scl_fd);
+    close(sdl_fd);
+    close(result_fd);
+    return 0;
+}

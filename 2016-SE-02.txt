@@ -1,0 +1,98 @@
+2016-SE-02 
+Двоичните файлове f1 и f2 съдържат 32 битови числа без знак (uint32_t). Файлът f1 е
+съдържа 𝑛 двойки числа, нека 𝑖-тата двойка е < 𝑥𝑖, 𝑦𝑖 >. 
+Напишете програма на C, която извлича интервалите с начало 𝑥𝑖 и дължина 𝑦𝑖
+от файла f2 и ги записва залепени в изходен файл f3.
+
+Пример:
+• f1 съдържа 4 числа (2 двойки): 30000, 20, 19000, 10
+• програмата записва в f3 две поредици 32-битови числа, взети от f2 както следва:
+• най-напред се записват числата, които са на позиции 30000, 30001, 30002, ... 30019.
+• след тях се записват числата от позиции 19000, 19001, ... 19009.
+
+Забележка: С пълен брой точки ще се оценяват решения, които работят със скорост, пропорционална
+на размера на изходния файл f3.
+
+#include <err.h>
+#include <stdint.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+
+typedef struct {
+    uint32_t offset;
+    uint32_t length;
+} pair_t;
+
+int main(int argc, char* argv[]) {
+    if (argc != 4) {
+        errx(1, "Three files expected!");
+    }
+
+    const char* f1 = argv[1];
+    const char* f2 = argv[2];
+    const char* f3 = argv[3];
+
+    struct stat info_f1;
+    struct stat info_f2;
+    if ((stat(f1, &info_f1)) < 0) {
+        err(5, "Could not stat file %s!\n", f1);
+    }
+    if ((stat(f2, &info_f2)) < 0) {
+        err(6, "Could not stat file %s!\n", f2);
+    }
+    const off_t f1_size = info_f1.st_size;
+    const off_t f2_size = info_f2.st_size;
+    if (f1_size == 0) {
+        errx(8, "File %s is empty!\n", f1);
+    }
+    if ((f1_size % sizeof(pair_t)) != 0) {
+        errx(7, "File %s must contain pairs of uint32_t numbers!\n", f1);
+    }
+
+    int fd1 = open(f1, O_RDONLY);
+    if (fd1 == -1) {
+        err(2, "Could not open file %s!\n", f1);
+    }
+
+    int fd2 = open(f2, O_RDONLY);
+    if (fd2 == -1) {
+        err(3, "Could not open file %s!\n", f2);
+    }
+
+    int fd3 = open(f3, O_WRONLY|O_TRUNC|O_CREAT, 0666);
+    if (fd3 == -1) {
+        err(4, "Could not open file %s!\n", f3);
+    }
+
+    pair_t pair;
+    ssize_t written_bytes;
+    ssize_t read_bytes;
+    uint32_t number;
+    while((read_bytes = read(fd1, &pair, sizeof(pair))) == sizeof(pair)) {
+        if(f2_size < (long int)((pair.offset + pair.length) * sizeof(uint32_t))) {
+            errx(10, "Invalid file size of %s!\n", f2);
+        }
+        off_t position = lseek(fd2, pair.offset * sizeof(uint32_t), SEEK_SET);
+        if(position == -1) {
+            err(11, "Could not lseek in file %s!\n", f2);
+        }
+        for(uint32_t i = 0; i < pair.length; i++) {
+            if((read_bytes = read(fd2, &number, sizeof(number))) != sizeof(number)) {
+                err(12, "Could not read properly from file %s!\n", f2);
+            }
+            if((written_bytes = write(fd3, &number, sizeof(number))) != sizeof(number)) {
+                err(13, "Could not write properly to file %s!\n", f3);
+            }
+        }
+    }
+
+    if (read_bytes != 0) {
+        err(9, "Could not read properly from file %s!\n", f1);
+    }
+
+    close(fd1);
+    close(fd2);
+    close(fd3);
+    return 0;
+}

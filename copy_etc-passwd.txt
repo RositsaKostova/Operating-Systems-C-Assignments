@@ -1,0 +1,42 @@
+Koпирайте файл /etc/passwd в текущата ви работна директория и променете разделителят на копирания файл от ":", на "?"
+
+#include <err.h>
+#include <unistd.h>
+#include <fcntl.h>
+
+int main(void) {
+    const char* source = "/etc/passwd";
+    const char* dest = "./my_passwd";
+
+    int fd_source = open(source, O_RDONLY);
+    int fd_dest = open(dest, O_WRONLY|O_TRUNC|O_CREAT, 0666);
+    if (fd_source == -1) {
+        err(1, "Could not open file %s\n", source);
+    }
+    if (fd_dest == -1) {
+        err(2, "Could not open file %s\n", dest);
+    }
+
+    char symbol;
+    ssize_t read_bytes;
+    while((read_bytes = read(fd_source, &symbol, sizeof(symbol))) == 1) {
+        if(symbol == ':') {
+            symbol = '?';
+        }
+        ssize_t written_bytes = write(fd_dest, &symbol, sizeof(symbol));
+        if(written_bytes == -1) {
+            close(fd_source);
+            close(fd_dest);
+            err(4, "Could not write properly to the new file %s\n", dest);
+        }
+    }
+    if(read_bytes == -1) {
+        close(fd_source);
+        close(fd_dest);
+        err(3, "Could not read properly from file %s\n", source);
+    }
+
+    close(fd_source);
+    close(fd_dest);
+        return 0;
+}

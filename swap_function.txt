@@ -1,0 +1,101 @@
+Реализирайте команда swap, разменяща съдържанието на два файла, подадени като входни параметри.
+
+#include <err.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <stdint.h>
+#include <stdlib.h>
+
+int fds[3] = {-1, -1, -1};
+void close_all(void) {
+    for(uint8_t i = 0; i < 3; i++) {
+        if(fds[i] != -1) {
+            close(fds[i]);
+        }
+    }
+}
+int open_safe(const char* file) {
+   int fd = open(file, O_RDWR|O_CREAT, 0666);
+   if(fd == -1) {
+        close_all();
+        err(5, "Could not open file %s!\n", file);
+   }
+   return fd;
+}
+int mkstemp_safe(char* file) {
+    int fd = mkstemp(file);
+    if(fd == -1) {
+        close_all();
+        err(6, "Could not create a temporary file!");
+    }
+    return fd;
+}
+void lseek_safe(int fd, const char* file) {
+    off_t new_pos = lseek(fd, 0, SEEK_SET);
+    if(new_pos == -1) {
+        close_all();
+        err(7, "Could not lseek in file %s!\n", file);
+    }
+}
+void truncate_safe(int fd, const char* file) {
+    int result = ftruncate(fd, 0);
+    if(result == -1) {
+        close_all();
+        err(8, "Could not truncate file %s!\n", file);
+    }
+}
+void unlink_safe(const char* filepath) {
+    int res = unlink(filepath);
+    if(res == -1) {
+        close_all();
+        err(9, "Could not delete temporary file!");
+    }
+}
+void copy_file(const char* source, const char* dest, int fd_source, int fd_dest) {
+    char buffer[4096];
+    ssize_t read_bytes;
+    while((read_bytes = read(fd_source, buffer, sizeof(buffer))) > 0) {
+        ssize_t written_bytes = write(fd_dest, buffer, read_bytes);
+        if(written_bytes == -1) {
+            close_all();
+            err(3, "Could not write properly to file %s!\n", dest);
+        }
+        if(written_bytes != read_bytes) {
+            uint16_t position_backwards = (read_bytes - written_bytes) * -1;
+            off_t new_pos = lseek(fd_source, position_backwards, SEEK_CUR);
+            if(new_pos == -1) {
+                close_all();
+                err(4, "Could not lseek in file %s!\n", source);
+            }
+        }
+    }
+    if(read_bytes == -1) {
+        close_all();
+        err(2, "Could not read from file %s!\n", source);
+    }
+}
+int main(int argc, char** argv) {
+    if(argc != 3) {
+        errx(1, "Two files expected!");
+    }
+    const char* file1 = argv[1];
+    const char* file2 = argv[2];
+    char temp_file[11] = "tempXXXXXX";
+
+    fds[0] = open_safe(file1);
+    fds[1] = open_safe(file2);
+    fds[2] = mkstemp_safe(temp_file);
+
+    copy_file(file1, temp_file, fds[0], fds[2]);
+    truncate_safe(fds[0], file1);
+    lseek_safe(fds[0], file1);
+    copy_file(file2, file1, fds[1], fds[0]);
+    lseek_safe(fds[2], temp_file);
+    truncate_safe(fds[1], file2);
+    lseek_safe(fds[1], file2);
+    copy_file(temp_file, file2, fds[2], fds[1]);
+
+    unlink_safe(temp_file);
+    close_all();
+    return 0;
+}

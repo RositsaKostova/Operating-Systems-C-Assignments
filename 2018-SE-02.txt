@@ -1,0 +1,170 @@
+2018-SE-02
+Напишете програма на C, която приема два параметъра – имена на файлове:
+	• примерно извикване: ./main input.bin output.bin
+	• файловете input.bin и output.bin се третират като двоични файлове, състоящи се от uint32_t
+	числа
+	• файлът input.bin може да съдържа максимум 4194304 числа
+	• файлът output.bin трябва да бъде създаден от програмата и да съдържа числата от input.bin,
+	сортирани във възходящ ред
+	• endianness-ът на машината, създала файла input.bin е същият, като на текущата машина
+	• ограничения на ресурси: програмата трябва да работи с употреба на максимум 9 MB RAM и 64
+	MB дисково пространство.
+
+#include <err.h>
+#include <stdint.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <stdlib.h>
+#include <stdbool.h>
+#include <string.h>
+int cmp(const void* a, const void* b) {
+    uint32_t arg1 = *(const uint32_t*)a;
+    uint32_t arg2 = *(const uint32_t*)b;
+
+    if (arg1 < arg2) return -1;
+    if (arg1 > arg2) return 1;
+    return 0;
+}
+
+int mkstemp_safe(char* temp) {
+   int fd = mkstemp(temp);
+   if (fd == -1) {
+        err(8, "Could not create temporary file!\n");
+   }
+   return fd;
+}
+
+void unlink_safe(const char* filepath) {
+    int res = unlink(filepath);
+    if(res == -1) {
+        err(12, "Could not delete temporary file!");
+    }
+}
+
+void unlink_all(char temp_names[2][11], int* temp_files) {
+    for(int i = 0; i < 2; i++) {
+        if(temp_files[i] != -1) {
+           unlink_safe(temp_names[i]);
+        }
+    }
+}
+
+int main(int argc, char* argv[]) {
+    if (argc != 3) {
+        errx(1, "Two binary files expected!\n");
+    }
+
+    const uint32_t MAX_NUMBERS = 4194304;
+    const char* input_file = argv[1];
+    const char* output_file = argv[2];
+
+    struct stat info;
+    if((stat(input_file, &info)) < 0) {
+        err(2, "Could not stat file %s!\n", input_file);
+    }
+    const off_t size = info.st_size;
+    if (size == 0) {
+        errx(3, "Empty input file %s!\n", input_file);
+    }
+    if ((size % sizeof(uint32_t)) != 0) {
+        errx(4, "Input file %s must contain only uint32_t numbers!\n", input_file);
+    }
+    if ((long unsigned int)size > (MAX_NUMBERS * sizeof(uint32_t))) {
+        errx(5, "Input file %s must not contain more than %d numbers!\n", input_file, MAX_NUMBERS);
+    }
+
+    int fd1 = open(input_file, O_RDONLY);
+    if (fd1 == -1) {
+        err(6, "Could not open file %s!\n", input_file);
+    }
+
+    int fd2 = open(output_file, O_WRONLY | O_TRUNC | O_CREAT, 0666);
+    if (fd2 == -1) {
+        err(7, "Could not open file %s!\n", output_file);
+    }
+
+    int temp_files[2] = {-1, -1};
+    char temp_names[2][11];
+    uint32_t buff[2097152];
+    ssize_t read_bytes;
+    uint8_t iter = 0;
+    while((read_bytes = read(fd1, buff, sizeof(buff))) > 0) {
+        if ((read_bytes % sizeof(uint32_t)) != 0) {
+            unlink_all(temp_names, temp_files);
+            errx(10, "Could not read whole numbers!\n");
+        }
+        uint32_t read_elements = read_bytes / sizeof(uint32_t);
+        qsort(buff, read_elements, sizeof(uint32_t), cmp);
+
+        char temp_file[11] = "tempXXXXXX";
+        temp_files[iter] = mkstemp_safe(temp_file);
+        strcpy(temp_names[iter], temp_file);
+
+        ssize_t written_bytes = write(temp_files[iter], buff, read_bytes);
+        if (written_bytes == -1) {
+            unlink_all(temp_names, temp_files);
+            err(11, "Could not write properly to temp file!\n");
+        }
+        iter++;
+    }
+    if (read_bytes == -1) {
+        unlink_all(temp_names, temp_files);
+        err(9, "Could not read properly from file %s!\n", input_file);
+    }
+
+   if (temp_files[1] == -1) {
+        if ((read_bytes = read(temp_files[0], buff, sizeof(buff))) < 0) {
+            unlink_all(temp_names, temp_files);
+            err(13, "Could not read from temp file!\n");
+        }
+        if (write(fd2, buff, read_bytes) < 0) {
+            unlink_all(temp_names, temp_files);
+            err(14, "Could not write to output file %s!\n", output_file);
+        }
+   } else {
+        uint32_t num1;
+        uint32_t num2;
+        ssize_t bytes_first = read(temp_files[0], &num1, sizeof(num1));
+        ssize_t bytes_second = read(temp_files[1], &num2, sizeof(num2));
+        while(true) {
+            if ((bytes_first == -1) || (bytes_second == -1)) {
+                unlink_all(temp_names, temp_files);
+                err(15, "Could not read a single number from temp file!\n");
+            } else if((bytes_first == 0) && (bytes_second == 0)) {
+                break;
+            } else if((bytes_first == 0) && (bytes_second != 0)) {
+                if (write(fd2, &num2, sizeof(num2)) < 0) {
+                    unlink_all(temp_names, temp_files);
+                    err(14, "Could not write to output file %s!\n", output_file);
+                }
+                bytes_second = read(temp_files[1], &num2, sizeof(num2));
+            } else if ((bytes_first != 0) && (bytes_second == 0)) {
+                if (write(fd2, &num1, sizeof(num1)) < 0) {
+                    unlink_all(temp_names, temp_files);
+                    err(14, "Could not write to output file %s!\n", output_file);
+                }
+                bytes_first = read(temp_files[0], &num1, sizeof(num1));
+            } else {
+                if(num1 <= num2) {
+                    if (write(fd2, &num1, sizeof(num1)) < 0) {
+                        unlink_all(temp_names, temp_files);
+                        err(14, "Could not write to output file %s!\n", output_file);
+                    }
+                    bytes_first = read(temp_files[0], &num1, sizeof(num1));
+                } else {
+                    if (write(fd2, &num2, sizeof(num2)) < 0) {
+                        unlink_all(temp_names, temp_files);
+                        err(14, "Could not write to output file %s!\n", output_file);
+                    }
+                    bytes_second = read(temp_files[1], &num2, sizeof(num2));
+                }
+            }
+        }
+    }
+    unlink_all(temp_names, temp_files);
+
+    close(fd1);
+    close(fd2);
+    return 0;
+}

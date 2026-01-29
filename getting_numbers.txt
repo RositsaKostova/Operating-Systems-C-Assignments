@@ -1,0 +1,101 @@
+Напишете програма, която приема точно 2 аргумента. Първият може да бъде само --min, --max или --print
+(вижте man 3 strcmp). Вторият аргумент е двоичен файл, в който има записани цели неотрицателни двубайтови числа
+(uint16_t - вижте man stdint.h). Ако първият аргумент е:
+
+--min - програмата отпечатва кое е най-малкото число в двоичния файл.
+--max - програмата отпечатва кое е най-голямото число в двоичния файл.
+--print - програмата отпечатва на нов ред всяко число.
+Използвайте двоичния файл binary/dump или генерирайте сами такъв (правилно подравнен).
+
+
+#include <err.h>
+#include <stdint.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <string.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/stat.h>
+
+void write_safe(uint16_t number, int fd) {
+    char buffer[10];
+    int res = snprintf(buffer, sizeof(buffer), "%d\n", number);
+    if(res == -1) {
+        close(fd);
+        errx(8, "Could not prepare the output!\n");
+    }
+    ssize_t written_bytes = write(1, buffer, strlen(buffer));
+    if(written_bytes == -1) {
+        close(fd);
+        err(9, "Could not write properly to stdout!\n");
+    }
+    if((size_t)written_bytes != strlen(buffer)) {
+        warnx("Could not write buffer properly to stdout!\n");
+    }
+}
+
+int main(int argc, char** argv) {
+    if (argc != 3) {
+        errx(1, "Two arguments expected!\n");
+    }
+
+    const char* option = argv[1];
+    const char* file = argv[2];
+
+    const char* min = "--min";
+    const char* max = "--max";
+    const char* print_all = "--print";
+    if((strcmp(option, min) != 0) && (strcmp(option, max) != 0) && (strcmp(option, print_all) != 0)) {
+        errx(2, "First argument must be --min, --max or --print!\n");
+    }
+
+    struct stat st;
+    int stat_res = stat(file, &st);
+    if(stat_res == -1) {
+        err(3, "Could not stat file %s!\n", file);
+    }
+    if(st.st_size == 0) {
+        errx(4, "File %s is empty!\n", file);
+    }
+    if((st.st_size % sizeof(uint16_t)) != 0) {
+        errx(5, "File %s must contain only uint16_t numbers!\n", file);
+    }
+
+    int fd = open(file, O_RDONLY);
+    if(fd == -1) {
+        err(6, "Could not open file %s!\n", file);
+    }
+
+    uint16_t number;
+    ssize_t read_bytes;
+    if(strcmp(option, min) == 0) {
+        uint16_t result = UINT16_MAX;
+        while((read_bytes = read(fd, &number, sizeof(number))) == sizeof(uint16_t)) {
+            if(number < result) {
+                result = number;
+            }
+        }
+        write_safe(result, fd);
+     }
+     else if(strcmp(option, max) == 0) {
+        uint16_t result = 0;
+        while((read_bytes = read(fd, &number, sizeof(number))) == sizeof(uint16_t)) {
+            if(number > result) {
+                result = number;
+            }
+        }
+        write_safe(result, fd);
+     }
+     else {
+        while((read_bytes = read(fd, &number, sizeof(number))) == sizeof(uint16_t)) {
+            write_safe(number, fd);
+        }
+     }
+    if((read_bytes != 0) && (read_bytes != sizeof(uint16_t))) {
+        close(fd);
+        err(7, "Could not read properly from file %s!\n", file);
+    }
+
+    close(fd);
+        return 0;
+}

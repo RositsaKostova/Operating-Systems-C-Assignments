@@ -1,0 +1,43 @@
+2016-SE-01
+Напишете програма на C, която приема параметър - име на (двоичен) файл с байтове.
+Програмата трябва да сортира файла.
+
+#include <err.h>
+#include <stddef.h>
+#include <unistd.h>
+
+int main(int argc, char* argv[]) {
+    if (argc != 2) {
+        errx(1, "A binary file expected!\n");
+    }
+    const char* file = argv[1];
+
+    int pipe_fds[2];
+    if (pipe(pipe_fds) < 0) {
+        err(2, "Could not create a pipe between processes!\n");
+    }
+
+    pid_t pid = fork();
+    if(pid == -1) {
+        err(3, "Could not create a child process!\n");
+    }
+
+    if (pid == 0) {
+        close(pipe_fds[0]);
+        if (dup2(pipe_fds[1], 1) == -1) {
+            err(4, "Could not redirect stdout!\n");
+        }
+        close(pipe_fds[1]);
+        execlp("cat", "cat", file, (char*)NULL);
+        err(5, "Could not cat file!\n");
+    }
+
+    close(pipe_fds[1]);
+    if(dup2(pipe_fds[0], 0) < 0) {
+        err(6, "Could not redirect stdin!\n");
+    }
+    close(pipe_fds[0]);
+    execlp("sort", "sort", (char*)NULL);
+    err(7, "Could not sort data!\n");
+
+}

@@ -1,0 +1,43 @@
+Реализирайте команда head без опции (т.е. винаги да извежда на стандартния изход само първите 10 реда от
+съдържанието на файл подаден като първи параматър).
+
+#include <err.h>
+#include <stdint.h>
+#include <fcntl.h>
+#include <unistd.h>
+
+int main(int argc, char** argv) {
+    if (argc != 2) {
+        errx(1, "Wrong number of arguments! One regular file expected!");
+    }
+
+    const char* file = argv[1];
+    int fd = open(file, O_RDONLY);
+    if (fd == -1) {
+        err(2, "Could not open file %s!\n", file);
+    }
+
+    char symbol;
+    uint8_t new_line_counter = 0;
+    ssize_t read_bytes;
+    while ((read_bytes = read(fd, &symbol, sizeof(symbol))) > 0) {
+        ssize_t written_bytes = write(1, &symbol, sizeof(symbol));
+        if (written_bytes == -1) {
+            close(fd);
+            err(4, "Could not write properly in stdout!");
+        }
+        if (symbol == '\n') {
+            new_line_counter++;
+            if (new_line_counter == 10) {
+                break;
+            }
+        }
+    }
+
+    if (read_bytes == -1) {
+        close(fd);
+        err(3, "Could not read properly from file %s!\n", file);
+    }
+    close(fd);
+        return 0;
+}

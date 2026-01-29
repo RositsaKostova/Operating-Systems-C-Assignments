@@ -1,0 +1,63 @@
+2020-SE-01
+Напишете две програми на C (foo и bar), които си комуникират през наименована тръба.
+Програмата foo приема параметър - име на файл, програмата bar приема параметър - команда като
+абсолютен път до изпълним файл.
+
+Примерни извиквания и ред на изпълнение (в отделни терминали):
+./foo a.txt
+./bar /usr/bin/sort
+
+Програмата foo трябва да изпълнява външна команда cat с аргумент името на подадения файл, така
+че съдържанието му да се прехвърли през тръбата към програмата bar, която от своя страна трябва
+да изпълни подадената и като аргумент команда (без параметри; /usr/bin/sort в примера), която да
+обработи получените през тръбата данни, четейки от стандартен вход. Еквивалент на горния пример
+би било следното изпълнение:
+
+cat a.txt | /usr/bin/sort
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+#include <err.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <stddef.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+
+int main(int argc, char* argv[]) {
+    if (argc != 2) {errx(1, "One file name expected!\n");}
+
+    const char* name = "foo_bar";
+    if (mkfifo(name, 0666) == -1 && errno != EEXIST) {err(2, "Could not create a fifo!\n");}
+
+    int fd = open(name, O_WRONLY);
+    if (fd == -1) {err(3, "Could not open fifo!\n");}
+
+    if (dup2(fd, 1) == -1) {err(4, "Could not dublicate descriptors!\n");}
+    close(fd);
+
+    execlp("cat", "cat", argv[1], (char*)NULL);
+    err(5, "Could not execute cat command!\n");
+
+        return 0;
+}
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+#include <stddef.h>
+#include <err.h>
+#include <fcntl.h>
+#include <unistd.h>
+
+int main(int argc, char* argv[]) {
+        if (argc != 2) {errx(1, "One command expected!\n");}
+
+        const char* fifo_name = "foo_bar";
+        int fd = open(fifo_name, O_RDONLY);
+        if (fd == -1) {err(2, "Could not open fifo!\n");}
+
+        if (dup2(fd, 0) == -1) {err(3, "Could not dublicdate descriptors!\n");}
+        close(fd);
+
+        execlp(argv[1], argv[1], (char*)NULL);
+        err(4, "Could not exec command!\n");
+
+        return 0;
+}

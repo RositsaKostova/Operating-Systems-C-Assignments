@@ -1,0 +1,120 @@
+2017-SE-02
+Напишете програма на C, която да работи подобно на командата cat, реализирайки само
+следната функционалност:
+	• общ вид на изпълнение: ./main [OPTION] [FILE]...
+	• ако е подаден като първи параметър -n, то той да се третира като опция, което кара програмата
+	ви да номерира (глобално) всеки изходен ред (започвайки от 1).
+	• програмата извежда на STDOUT
+	• ако няма подадени параметри (имена на файлове), програмата чете от STDIN
+	• ако има подадени параметри – файлове, програмата последователно ги извежда
+	• ако някой от параметрите е тире (-), програмата да го третира като специално име за STDIN
+
+Примерно извикване:
+$ cat a.txt
+a1
+a2
+
+$ cat b.txt
+b1
+b2
+b3
+
+$ echo -e "s1\ns2" | ./main -n a.txt - b.txt
+1 a1
+2 a2
+3 s1
+4 s2
+5 b1
+6 b2
+7 b3
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+#include <err.h>
+#include <stdbool.h>
+#include <string.h>
+#include <unistd.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <fcntl.h>
+
+int open_safe(const char* file);
+ssize_t read_safe(int fd, char* ch, const char* file);
+void write_safe(char ch, bool toNumerate, int* num);
+void process_stream(int fd, const char* file, bool toNumerate, int* num);
+
+int open_safe(const char* file) {
+    int fd = open(file, O_RDONLY);
+    if (fd == -1) {
+        err(1, "Could not open file %s!\n", file);
+    }
+    return fd;
+}
+
+ssize_t read_safe(int fd, char* ch, const char* file) {
+    ssize_t read_bytes = read(fd, ch, sizeof(*ch));
+    if (read_bytes == -1) {
+        err(2, "Could not read properly from %s!\n", file);
+    }
+    return read_bytes;
+}
+
+void write_safe(char ch, bool toNumerate, int* num) {
+    if (toNumerate == true) {
+        char buff[20];
+        snprintf(buff, sizeof(buff), "%d %s", *num, &ch);
+        if (write(1, buff, strlen(buff)) == -1) {
+            err(3, "Could not write to stdout!\n");
+        }
+    }
+    else {
+        if (write(1, &ch, sizeof(ch)) == -1) {
+            err(3, "Could not write to stdout!\n");
+        }
+    }
+}
+
+void process_stream(int fd, const char* file, bool toNumerate, int* num) {
+    char ch;
+    bool nextToNumerate = true;
+    while (read_safe(fd, &ch, file)) {
+        if (nextToNumerate && toNumerate) {
+            write_safe(ch, true, num);
+            (*num)++;
+        } else {
+            write_safe(ch, false, num);
+        }
+        nextToNumerate = (ch == '\n');
+    }
+}
+
+int main(int argc, char* argv[]) {
+    bool toNumerate = false;
+    uint32_t args_count = argc - 1;
+    int iter = 1;
+
+    if ((argc > 1) && (strcmp(argv[1], "-n") == 0)) {
+        toNumerate = true;
+        args_count = argc - 2;
+        iter = 2;
+    }
+
+    int num = 1;
+    int stdin_fd = 0;
+
+    for (uint32_t i = 0; i < args_count; i++) {
+        if (strcmp(argv[iter], "-") == 0) {
+            process_stream(stdin_fd, argv[iter], toNumerate, &num);
+        } else {
+            int fd = open_safe(argv[iter]);
+            process_stream(fd, argv[iter], toNumerate, &num);
+            close(fd);
+        }
+        iter++;
+    }
+
+    if (args_count == 0) {
+        process_stream(stdin_fd, argv[iter], toNumerate, &num);
+    }
+
+    return 0;
+}

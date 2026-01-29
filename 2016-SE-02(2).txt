@@ -1,0 +1,52 @@
+2016-SE-02
+Напишете програма на C, която реализира simple command prompt. Тя изпълнява в цикъл
+следната поредица действия:
+	1. Извежда промпт на стандартния изход.
+	2. Прочита име на команда.
+	3. Изпълнява без параметри прочетената команда.
+Командите се търсят в директорията /bin. За край на програмата се смята въвеждането на exit.
+---------------------------------------------------------------------------------------------------------------------------------------------
+
+#include <err.h>
+#include <string.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#include <stdbool.h>
+
+void doChild(const char* command) {
+    execlp(command, command, (char*)NULL);
+    err(4, "Could not execute the command %s!\n", command);
+}
+
+void wait_child(void) {
+    int status;
+    if (wait(&status) == -1) {err(5, "Parent could not wait child!\n");}
+    if(!WIFEXITED(status)) {errx(6, "Task failed: child was killed!\n");}
+    if(WEXITSTATUS(status) != 0) {errx(7, "Task failed: exit status is not 0!\n");}
+}
+
+void doParent(void) {
+    const char* prompt = ">> ";
+    char command[100];
+    ssize_t written_bytes;
+    ssize_t read_bytes;
+    while (true) {
+        if((written_bytes = write(1, prompt, strlen(prompt))) == -1) {err(1, "Could not display prompt!\n");}
+        if((read_bytes = read(0, command, sizeof(command))) == -1) {err(2, "Could not read command!\n");}
+        command[read_bytes - 1] = '\0';
+        if (strcmp(command, "exit") == 0) {break;}
+
+        pid_t pid = fork();
+        if (pid == -1) {err(3, "Could not create a child process!\n");}
+
+        if (pid == 0) {
+            doChild(command);
+        }
+        wait_child();
+    }
+}
+
+int main(void) {
+    doParent();
+    return 0;
+}

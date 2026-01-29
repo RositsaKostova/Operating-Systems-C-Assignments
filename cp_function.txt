@@ -1,0 +1,66 @@
+Реализирайте команда cp, работеща с произволен брой подадени входни параметри.
+
+#include <err.h>
+#include <string.h>
+#include <stdio.h>
+#include <stdint.h>
+#include <unistd.h>
+#include <fcntl.h>
+
+void copy_files(const char* source, const char* dest) {
+    int fd_source = open(source, O_RDONLY);
+    int fd_dest = open(dest, O_WRONLY|O_TRUNC|O_CREAT, 0666);
+    if (fd_source == -1) {
+        err(2, "Could not open file %s!\n", source);
+    }
+    if (fd_dest == -1) {
+        err(3, "Could not open file %s!\n", dest);
+    }
+
+    char buffer[4096];
+    ssize_t read_bytes;
+    while((read_bytes = read(fd_source, buffer, sizeof(buffer))) > 0) {
+        ssize_t written_bytes = write(fd_dest, buffer, read_bytes);
+        if(written_bytes == -1) {
+            close(fd_source);
+            close(fd_dest);
+            err(5, "Could not write properly to file %s!\n", dest);
+        }
+        if(written_bytes != read_bytes) {
+            uint16_t position_backwards = (read_bytes - written_bytes) * -1;
+            off_t new_pos = lseek(fd_source, position_backwards, SEEK_CUR);
+            if(new_pos == -1) {
+                close(fd_source);
+                close(fd_dest);
+                err(6, "Could not lseek in file %s!\n", source);
+            }
+        }
+    }
+    if(read_bytes == -1) {
+        close(fd_source);
+        close(fd_dest);
+        err(4, "Could not read properly from file %s!\n", source);
+    }
+    close(fd_source);
+    close(fd_dest);
+}
+
+int main(int argc, char** argv) {
+    if (argc < 3) {
+        errx(1, "At least 2 arguments expected!");
+    }
+
+    if (argc == 3) {
+        copy_files(argv[1], argv[2]);
+    }
+    else {
+        const char* directory = argv[argc - 1];
+        char destination[300];
+        for(uint8_t i = 1; i <= argc - 2; i++) {
+            const char* current_file = argv[i];
+            snprintf(destination, sizeof(destination), "%s/%s", directory, current_file);
+            copy_files(current_file, destination);
+        }
+    }
+        return 0;
+}

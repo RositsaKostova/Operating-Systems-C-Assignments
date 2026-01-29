@@ -1,0 +1,101 @@
+2021-SE-01
+Инженерите от съседната лабораторя ползват специализиран хардуер и софтуер за прехвърляне на данни по радио, но за съжаление имат два проблема:
+	• в радио частта: дълги поредици битове само 0 или само 1 чупят преноса;
+	• в софтуерната част: софтуерът, който ползват, може да прехвърля само файлове с четен брой байтове дължина.
+Помогнете на колегите си, като напишете програма на C, която решава тези проблеми, като подготвя
+файлове за прехвърляне. Програмата трябва да приема два задължителни позиционни аргумента –
+имена на файлове.
+Примерно извикване:
+$ ./main input.bin output.bin
+
+Програмата чете данни от input.bin и записва резултат след обработка в output.bin. Програмата
+трябва да работи като encoder, който имплементира вариант на Manchester code, т.е.:
+	• за всеки входен бит 1 извежда битовете 10, и
+	• за всеки входен бит 0 извежда битовете 01
+
+Например, следните 8 бита вход
+1011 0110 == 0xB6
+
+по описаният алгоритъм дават следните 16 бита изход
+1001 1010 0110 1001 == 0x9A69
+
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+#include <err.h>
+#include <stdint.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <stdbool.h>
+#include <sys/stat.h>
+
+int open_safe(const char* file, bool isForRead);
+int open_safe(const char* file, bool isForRead) {
+    int fd;
+    if (isForRead == true) {
+        fd = open(file, O_RDONLY);
+    }
+    else {
+        fd = open(file, O_WRONLY | O_TRUNC | O_CREAT, 0666);
+    }
+    if (fd == -1) {err(2, "Could not open file %s!\n", file);}
+    return fd;
+}
+
+void write_safe(int fd, uint16_t result);
+void write_safe(int fd, uint16_t result) {
+    ssize_t written_bytes;
+    if ((written_bytes = write(fd, &result, sizeof(result))) == -1) {err(6, "Could not write to output file!\n");}
+    if ((long unsigned int)written_bytes != sizeof(result)) {errx(7, "Could not write the whole result to output file!\n");}
+}
+
+void set_result(uint8_t byte, int fd);
+void set_result(uint8_t byte, int fd) {
+    uint16_t result = 0;
+    uint8_t byte_mask = 1 << 7;
+    uint16_t result_mask = 1 << 15;
+    for(int i = 0; i < 8; i++) {
+        if ((byte & byte_mask) == 0) {
+            result_mask = result_mask >> 1;
+            result |= result_mask;
+            result_mask = result_mask >> 1;
+        } else {
+            result |= result_mask;
+            result_mask = result_mask >> 2;
+        }
+        byte_mask = byte_mask >> 1;
+    }
+    write_safe(fd, result);
+}
+
+int main(int argc, char* argv[]) {
+    if (argc != 3) {errx(1, "Two files expected!\n");}
+
+    const char* input = argv[1];
+    const char* output = argv[2];
+
+    int fd_input = open_safe(input, true);
+    int fd_output = open_safe(output, false);
+
+    bool pad = false;
+    struct stat info;
+    if (fstat(fd_input, &info) == -1) {err(12, "Could not stat file %s!\n", input);}
+    if (info.st_size % 2 != 0) {
+        pad = true;
+    }
+
+    uint8_t byte;
+    ssize_t read_bytes;
+    while((read_bytes = read(fd_input, &byte, sizeof(byte))) > 0) {
+        set_result(byte, fd_output);
+    }
+    if (read_bytes == -1) {err(3, "Could not read properly from file %s!\n", input);}
+
+    if (pad) {
+        byte = 0x00;
+        set_result(byte, fd_output);
+    }
+
+    close(fd_input);
+    close(fd_output);
+    return 0;
+}

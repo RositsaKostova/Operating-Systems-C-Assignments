@@ -1,0 +1,110 @@
+Напишете програма на C, която приема един задължителен позиционен параметър - име на файл. Файлът се състои от не повече от 8 наредени тройки елементи:
+	• име на файл – точно 8 байта, последният от които задължително е 0x00. Ако името е по-късо от 7 знака, излишните байтове са 0x00;
+	• offset – uint32_t, който дава пореден номер на елемент (спрямо 𝑁0) във файла;
+	• length – uint32_t, който дава брой елементи.
+За всяка наредена тройка програмата трябва да пусне child процес, който да XOR-не (обработи с изключващоили) елементите (uint16_t) от съответния файл един със друг, и да върне резултата на parent процеса,
+който от своя страна трябва да XOR-не всички получените резултати и да изведе полученото число в следния формат:
+result: 573B
+
+Забележка: С пълен брой точки се оценяват решения, в които child процесите работят паралелно.
+
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+#include <fcntl.h>
+#include <unistd.h>
+#include <stdint.h>
+#include <err.h>
+#include <sys/stat.h>
+#include <stdlib.h>
+#include <sys/wait.h>
+#include <stdio.h>
+#include <string.h>
+
+typedef struct {
+    char file_name[8];
+    uint32_t offset;
+    uint32_t length;
+} entry_t;
+
+void xorfile(entry_t* entry, int toWrite);
+void xorfile(entry_t* entry, int toWrite) {
+    int fd = open(entry->file_name, O_RDONLY);
+    if (fd == -1) {err(10, "Could not open file for xor!\n");}
+
+    struct stat info;
+    if (fstat(fd, &info) == -1) {err(11, "Could not stat file for xor!\n");}
+    if (info.st_size == 0) {errx(12, "Empty file for xor!\n");}
+    if ((long unsigned int)info.st_size < (sizeof(uint16_t) * (entry->offset + entry->length))) {errx(13, "Invalid file size!\n");}
+
+    if (lseek(fd, entry->offset * sizeof(uint16_t), SEEK_SET) == -1) {err(14, "Could not lseek file!\n");}
+    ssize_t read_bytes;
+    uint32_t length = entry->length;
+    uint16_t element;
+    uint32_t result = 0;
+    while((length > 0) && (read_bytes = read(fd, &element, sizeof(element))) == sizeof(element)) {
+        result ^= element;
+        length--;
+    }
+    if (read_bytes == -1) {err(15, "Could not read properly from file %s!\n", entry->file_name);}
+
+    ssize_t written_bytes;
+    if ((written_bytes = write(toWrite, &result, sizeof(result))) == -1) {err(16, "Error whilst writing in the pipe!\n");}
+}
+
+int main(int argc, char* argv[]) {
+    if (argc != 2) {
+        errx(1, "One file expected!\n");
+    }
+
+    int fd = open(argv[1], O_RDONLY);
+    if (fd == -1) {err(2, "Could not open file %s!\n", argv[1]);}
+
+    struct stat info;
+    if (fstat(fd, &info) == -1) {err(3, "Could not stat file %s!\n", argv[1]);}
+    if (info.st_size == 0) {errx(4, "File %s is empty!\n", argv[1]);}
+    if ((long unsigned int)info.st_size > (8 * sizeof(entry_t))) {errx(5, "Invalid file content of file %s!\n", argv[1]);}
+
+    int pipe_fds[2];
+    if (pipe(pipe_fds) == -1) {err(6, "Could not create a pipe between processes!\n");}
+
+    ssize_t read_bytes;
+    entry_t entry;
+    uint32_t children_count = 0;
+    while((read_bytes = read(fd, &entry, sizeof(entry))) == sizeof(entry)) {
+        children_count++;
+        pid_t pid = fork();
+        if (pid == -1) {err(9, "Could not create a child!\n");}
+        if (pid == 0) {
+            close(fd);
+            close(pipe_fds[0]);
+            xorfile(&entry, pipe_fds[1]);
+            close(pipe_fds[1]);
+            exit(0);
+        }
+    }
+    if (read_bytes == -1) {err(7, "Could not read properly from file %s!\n", argv[1]);}
+    if (read_bytes != 0) {errx(8, "Could not read a whole entry from file %s!\n", argv[1]);}
+
+    close(pipe_fds[1]);
+    uint32_t result = 0;
+    ssize_t read_b;
+    uint32_t element;
+    while((read_b = read(pipe_fds[0], &element, sizeof(element))) == sizeof(element)) {
+        result ^= element;
+    }
+    if (read_b == -1) {err(17, "Could not read properly from the pipe!\n");}
+    close(pipe_fds[0]);
+
+    int status;
+    for(uint32_t i = 0; i < children_count; i++) {
+        if (wait(&status) == -1) {err(18, "Could not wait for children!\n");}
+        if (!WIFEXITED(status)) {errx(19, "Task failed: child was killed!\n");}
+        if (WEXITSTATUS(status) != 0) {errx(20, "Task failed: exit status is not 0!\n");}
+    }
+    close(fd);
+
+    char buff[100];
+    snprintf(buff, sizeof(buff), "result: %.4X\n", result);
+    if (write(1, buff, strlen(buff)) == -1) {err(21, "Could not write to stdout!\n");}
+        return 0;
+}

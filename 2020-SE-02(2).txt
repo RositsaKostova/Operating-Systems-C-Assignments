@@ -1,0 +1,88 @@
+2020-SE-02'
+При изграждане на система за пренасяне на сериен асинхронен сигнал върху радиопреносна мрежа се оказало, че големи поредици от битове само нули или само единици смущават сигнала, поради нестабилно ниво.
+Инженерите решили проблема, като:
+	• в моментите, в които няма сигнал от серийният порт, вкарвали изкуствено байт 0x55 в потока;
+	• реалните байтове 0x00, 0xFF, 0x55 и 0x7D се кодирали посредством XOR-ване (побитова обработка с изключващо-или) с 0x20, като полученият байт се изпращал през потока, предхождан от 0x7D, който играе ролята на escape character.
+Разполагате със запис от такъв поток. Напишете програма на C, която приема два параметъра - имена
+на файлове.
+
+Примерно извикване:
+$ ./main input.lfld output.bin
+
+Програмата трябва да обработва записа и да генерира output.bin, който да съдържа оригиналните
+данни. Четенето на входните данни трябва да става посредством изпълнение на външна shell команда.
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+#include <err.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <stdint.h>
+
+int open_safe(const char* file);
+pid_t fork_safe(void);
+
+int open_safe(const char* file) {
+    int fd = open(file, O_WRONLY | O_TRUNC | O_CREAT, 0666);
+    if (fd == -1) {err(2, "Could not open file %s!\n", file);}
+    return fd;
+}
+
+pid_t fork_safe(void) {
+    pid_t pid = fork();
+    if (pid == -1) {err(3, "Could not create a child process!\n");}
+    return pid;
+}
+
+void write_safe(int fd, const char* file, uint8_t byte) {
+    if (write(fd, &byte, sizeof(byte)) == -1) {
+        err(8, "Could not write properly to file %s!\n", file);
+    }
+}
+
+void pipe_safe(int pipeFds[2]) {
+    if (pipe(pipeFds) == -1) {err(4, "Could not create a communication chanel between processes!\n");}
+}
+
+int main(int argc, char* argv[]) {
+        if (argc != 3) {errx(1, "Two files expected!\n");}
+
+        const char* input = argv[1];
+        const char* output = argv[2];
+
+        int output_fd = open_safe(output);
+
+    int pipeFds[2];
+    pipe_safe(pipeFds);
+    pid_t pid = fork_safe();
+    if (pid == 0) {
+        close(pipeFds[0]);
+
+        if (dup2(pipeFds[1], 1) == -1) {err(5, "Could not redirect stdout!\n");}
+        close(pipeFds[1]);
+
+        execlp("cat", "cat", input, (char*)NULL);
+        err(6, "Could not execute cat of input file %s!\n", input);
+    }
+
+    close(pipeFds[1]);
+
+    ssize_t read_bytes;
+    uint8_t byte;
+    while((read_bytes = read(pipeFds[0], &byte, sizeof(byte))) > 0) {
+        if (byte == 0x7D) {
+            if ((read_bytes = read(pipeFds[0], &byte, sizeof(byte))) == -1) {err(7, "Could not read properly from pipe!\n");}
+            if (read_bytes != sizeof(byte)) {errx(9, "Unexpected EOF after escape byte!\n");}
+            uint8_t result = byte ^ 0x20;
+            write_safe(output_fd, output, result);
+        }
+        else {
+            write_safe(output_fd, output, byte);
+        }
+    }
+    if (read_bytes == -1) {err(7, "Could not read properly from pipe!\n");}
+
+    close(pipeFds[0]);
+    close(output_fd);
+
+    return 0;
+}

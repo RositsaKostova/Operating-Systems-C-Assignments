@@ -1,0 +1,123 @@
+ 2023-SE-02
+Напишете програма, която изпълнява списък от команди в паралелни процеси, но щом някой от 
+процесите изведе ред с текста “found it!”, прекратява изпълнението на всички процеси.
+За улеснение, командите нямат свои аргументи и се подават като аргументи на вашата програма.
+
+Примерно извикване: ./main ./tests/foo ./tests/bar ./tests/baz
+
+Прекратяването на процес става, като му изпратим SIGTERM и след това го изчакаме да приключи.
+Изходът на командите (извън това дали stdout съдържа търсения текст) и техните статуси не ни интересуват. Програмата ви не трябва да извежда нищо, а нейният статус трябва да е:
+	• 0, ако някой процес е извел текста “found it!”
+	• 1, ако всички процеси са завършили и никой процес не е извел текста
+	• 26 при друга грешка
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+#include <err.h>
+#include <unistd.h>
+#include <string.h>
+#include <sys/wait.h>
+#include <stdlib.h>
+
+void do_task(const char* command, int fd_to_parent) {
+    int child_to_child[2];
+    if (pipe(child_to_child) == -1) {err(26, "Could not create a communication channel between processes!\n");}
+
+    pid_t pid = fork();
+    if (pid == -1) {err(26, "Could not craete a child process!\n");}
+    if(pid == 0) {
+        close(fd_to_parent);
+        close(child_to_child[0]);
+
+        if(dup2(child_to_child[1], 1) == -1) {err(26, "Could not redirect stdout!\n");}
+        close(child_to_child[1]);
+
+        execlp(command, command, (char*)NULL);
+        err(26, "Could not execute program %s!\n", command);
+    }
+
+    close(child_to_child[1]);
+
+    ssize_t read_bytes;
+    char ch;
+    const char* pattern = "found it!";
+    int size = strlen(pattern);
+    int index = 0;
+    char answer = 'a';
+    while((read_bytes = read(child_to_child[0], &ch, sizeof(ch))) > 0) {
+        if (ch == pattern[index]) {
+            index++;
+        } else {
+            index = 0;
+        }
+
+        if (index == size) {
+            answer = 'y';
+            if (write(fd_to_parent, &answer, sizeof(answer)) == -1) {err(26, "Could not write to parent process!\n");}
+            break;
+        }
+    }
+    if (read_bytes == -1) {err(26, "Could not read properly from pipe!\n");}
+
+    if (answer == 'a') {
+        answer = 'n';
+        if (write(fd_to_parent, &answer, sizeof(answer)) == -1) {err(26, "Could not write to parent process!\n");}
+    }
+    close(fd_to_parent);
+    close(child_to_child[0]);
+
+    int status;
+    if (wait(&status) == -1) {err(26, "Child could not wait for its child!\n");}
+    if (WIFEXITED(status)) {
+        if (WEXITSTATUS(status) != 0) {
+            errx(26, "Task failed: child exit status is not 0!\n");
+        }
+    } else {
+        errx(26, "Task failed: child was killed!\n");
+    }
+    exit(0);
+}
+
+int main(int argc, char* argv[]) {
+        if (argc < 2) {errx(26, "At least one command!\n");}
+
+        pid_t pids[4096];
+
+        int pipeFds[2];
+        if (pipe(pipeFds) == -1) {err(26, "Could not create a communication channel between processes!\n");}
+
+        int commands_count = argc - 1;
+
+        for(int i = 1; i <= commands_count; i++) {
+            pid_t pid = fork();
+            if (pid == -1) {err(26, "Could not craete a child process!\n");}
+            if (pid == 0) {
+                close(pipeFds[0]);
+
+            do_task(argv[i], pipeFds[1]);
+            }
+            pids[i - 1] = pid;
+        }
+
+        close(pipeFds[1]);
+        char answer;
+        ssize_t read_bytes;
+        while((read_bytes = read(pipeFds[0], &answer, sizeof(answer))) > 0) {
+        if (answer == 'y') {
+            for(int i = 0; i < commands_count; i++) {
+                if (kill(pids[i], SIGTERM) == -1) {err(26, "Could not kill child!\n");}
+            }
+            for(int i = 0; i < commands_count; i++) {
+                if (wait(NULL) == -1) {err(26, "Could not wait!\n");}
+            }
+            close(pipeFds[0]);
+            exit(0);
+        }
+        }
+        if (read_bytes == -1) {err(26, "Could not read from pipe!\n");}
+    close(pipeFds[0]);
+    for(int i = 0; i < commands_count; i++) {
+        if (wait(NULL) == -1) {err(26, "Could not wait!\n");}
+    }
+    exit(1);
+}
+

@@ -1,0 +1,60 @@
+2017-SE-04
+Напишете програма на C, която да работи подобно на командата cat, реализирайки само
+следната функционалност:
+	• програмата извежда на STDOUT
+	• ако няма подадени параметри, програмата чете от STDIN
+	• ако има подадени параметри – файлове, програмата последователно ги извежда
+	• ако някой от параметрите започва с тире (-), програмата да го третира като специално име за
+	STDIN
+
+Примерно извикване:
+$ ./main f - g
+– извежда съдържанието на файла f, после STDIN, след това съдържанието на файла g.
+
+
+#include <err.h>
+#include <unistd.h>
+#include <sys/wait.h>
+
+void cat_func(const char* arg) {
+    pid_t pid = fork();
+    if (pid == -1) {
+        err(1, "Could not create a child process!\n");
+    }
+    if (pid == 0) {
+        if (arg[0] == '-') {
+            execlp("cat", "cat", (char*)NULL);
+            err(2, "Could not cat file!\n");
+        } else {
+            execlp("cat", "cat", arg, (char*)NULL);
+            err(2, "Could not cat file!\n");
+        }
+    }
+}
+
+void wait_child(void) {
+    int status;
+    pid_t pid = wait(&status);
+    if (pid == -1) {
+        err(3, "Could not wait for child!\n");
+    }
+    if (!WIFEXITED(status)) {
+        errx(4, "Task failed: child process was killed!\n");
+    } else if (WEXITSTATUS(status) != 0) {
+        errx(5, "Task failed: exit status is not 0!\n");
+    }
+}
+
+int main(int argc, char* argv[]) {
+    if (argc == 1) {
+        const char* arg = "-";
+        cat_func(arg);
+        wait_child();
+    } else {
+        for(int i = 1; i < argc; i++) {
+            cat_func(argv[i]);
+            wait_child();
+        }
+    }
+        return 0;
+}
